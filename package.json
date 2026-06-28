@@ -1,7 +1,7 @@
 {
-  "name": "comic-vault-ksa-backend",
+  "name": "lite-comic-api",
   "version": "1.0.0",
-  "description": "Complete backend for ComicVault KSA",
+  "description": "ComicVault KSA Backend",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
