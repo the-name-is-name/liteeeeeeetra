@@ -1,0 +1,17 @@
+{
+  "name": "comic-vault-ksa-backend",
+  "version": "1.0.0",
+  "description": "Complete backend for ComicVault KSA",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "axios": "^1.16.1",
+    "cheerio": "^1.2.0",
+    "cors": "^2.8.6",
+    "express": "^4.22.2",
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.3.1"
+  }
+}
