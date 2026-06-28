@@ -1,76 +1,79 @@
-require('dotenv').config();
+require('dotenv').config(); // Added for hidden keys
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
-const cheerio = require('cheerio');
-const { createClient } = require('@supabase/supabase-js');
-const ComicScraper = require('./scraper'); // Your preview scraper
+const cheerio = require('cheerio'); // Added for KSA price scraping
+const { createClient } = require('@supabase/supabase-js'); // Added for DB
+const ComicScraper = require('./scraper');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const scraper = new ComicScraper();
 
-// Middleware
+// Enable CORS for all routes so your frontend can communicate with this API
 app.use(cors());
-app.use(express.json());
+app.use(express.json()); // Required for parsing JSON bodies in POST requests
 
-// 🔒 Supabase Client (Keys hidden in .env, NEVER in frontend)
+// 🔒 SECURE SUPABASE CONNECTION (Keys hidden in .env)
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// ==========================================
-// 📖 YOUR PREVIEW/READER ROUTES (Preserved + Fixed for Render)
-// ==========================================
+// --- EXISTING SEARCH ROUTE (GET) ---
+// Example: http://localhost:3000/api/search?q=batman
 app.get('/api/search', async (req, res) => {
+    const query = req.query.q;
+    if (!query) return res.status(400).json({ error: "Missing search query '?q='" });
+    const results = await scraper.searchComic(query);
+    res.json(results);
+});
+
+// --- NEW SEARCH ROUTE (POST) ---
+// Example: POST to http://localhost:3000/api/search with JSON body { "keyword": "batman" }
+app.post('/api/search', async (req, res) => {
+    const { keyword } = req.body;
+    if (!keyword) return res.status(400).json({ error: "Missing 'keyword' in request body" });
     try {
-        const query = req.query.q;
-        if (!query) return res.status(400).json({ error: "Missing search query '?q='" });
-        const results = await scraper.searchComic(query);
+        const results = await scraper.searchComic(keyword);
         res.json(results);
-    } catch (err) {
-        res.status(500).json({ error: "Search failed", details: err.message });
+    } catch (error) {
+        console.error('[Search Error]:', error.message);
+        res.status(500).json({ error: "Failed to perform search" });
     }
 });
 
+// --- 1. Get detailed info (Genres, Status, etc.) ---
 app.get('/api/details', async (req, res) => {
-    try {
-        const url = req.query.url;
-        if (!url) return res.status(400).json({ error: "Missing URL" });
-        const details = await scraper.getComicDetails(url);
-        if (!details) return res.status(404).json({ error: "Could not fetch details" });
-        res.json(details);
-    } catch (err) {
-        res.status(500).json({ error: "Details failed", details: err.message });
-    }
+    const url = req.query.url;
+    if (!url) return res.status(400).json({ error: "Missing URL" });
+    const details = await scraper.getComicDetails(url);
+    if (!details) return res.status(404).json({ error: "Could not fetch details" });
+    res.json(details);
 });
 
+// --- 2. Get chapters list ---
 app.get('/api/chapters', async (req, res) => {
-    try {
-        const url = req.query.url;
-        if (!url) return res.status(400).json({ error: "Missing URL" });
-        const chapters = await scraper.getChapters(url);
-        res.json(chapters);
-    } catch (err) {
-        res.status(500).json({ error: "Chapters fetch failed", details: err.message });
-    }
+    const url = req.query.url;
+    if (!url) return res.status(400).json({ error: "Missing URL" });
+    const chapters = await scraper.getChapters(url);
+    res.json(chapters);
 });
 
+// --- 3. Get images for a chapter ---
 app.get('/api/pages', async (req, res) => {
-    try {
-        const url = req.query.url;
-        if (!url) return res.status(400).json({ error: "Missing URL" });
-        const rawPages = await scraper.getPages(url);
+    const url = req.query.url;
+    if (!url) return res.status(400).json({ error: "Missing URL" });
+    const rawPages = await scraper.getPages(url);
+    
+    // 🚨 FIXED FOR RENDER: Uses dynamic host instead of localhost so images load on the live site
+    const baseUrl = req.protocol + '://' + req.get('host');
+    const proxiedPages = rawPages.map(pageUrl => {
+        return `${baseUrl}/api/proxy-image?url=${encodeURIComponent(pageUrl)}`;
+    });
 
-        // 🚨 DYNAMIC PROXY FIX: Replaces hardcoded localhost with your actual deployed URL
-        const baseUrl = req.protocol + '://' + req.get('host');
-        const proxiedPages = rawPages.map(pageUrl =>
-            `${baseUrl}/api/proxy-image?url=${encodeURIComponent(pageUrl)}`
-        );
-        res.json(proxiedPages);
-    } catch (err) {
-        res.status(500).json({ error: "Pages fetch failed", details: err.message });
-    }
+    res.json(proxiedPages);
 });
 
+// --- Image Proxy ---
+// Example: http://localhost:3000/api/proxy-image?url=[ENCODED_IMAGE_URL]
 app.get('/api/proxy-image', async (req, res) => {
     const targetUrl = req.query.url;
     if (!targetUrl) return res.status(400).send("Missing image URL parameter");
@@ -80,19 +83,25 @@ app.get('/api/proxy-image', async (req, res) => {
             method: 'GET',
             responseType: 'stream',
             headers: {
-                'User-Agent': scraper.getRandomHeaders()['User-Agent'],
-                'Referer': 'https://rcostation.xyz/'
+                // FIXED: Used getRandomHeaders() instead of the non-existent scraper.headers
+                'User-Agent': scraper.getRandomHeaders()['User-Agent'], 
+                'Referer': 'https://rcostation.xyz/' // This bypasses their hotlink protection
             }
         });
+
+        // Set proper content type based on the response from the server
         res.setHeader('Content-Type', response.headers['content-type']);
+        
+        // Pipe the stream directly back to the client
         response.data.pipe(res);
     } catch (error) {
+        console.error(`[Proxy Error] Failed to load ${targetUrl}:`, error.message);
         res.status(500).send("Failed to load image");
     }
 });
 
 // ==========================================
-// 📦 COLLECTION & DATABASE ROUTES
+// 📦 COLLECTION & DATABASE ROUTES (SUPABASE)
 // ==========================================
 app.get('/api/collection', async (req, res) => {
     try {
@@ -206,11 +215,11 @@ app.get('/api/ksa-prices', async (req, res) => {
     res.json(prices);
 });
 
-// Health Check
 app.get('/', (req, res) => {
-    res.send('<h1>🦇 ComicVault KSA API is Running!</h1><p>Use /api/search?q=batman to test.</p>');
+    res.send('<h1>Comic API is Running!</h1><p>Use /api/search?q=batman to test it.</p>');
 });
 
+// Start the server
 app.listen(PORT, () => {
-    console.log(`✅ Server initialized. API running on port ${PORT}`);
+    console.log(`Server initialized. API running on http://localhost:${PORT}`);
 });
